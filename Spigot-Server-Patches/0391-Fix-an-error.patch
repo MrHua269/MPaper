@@ -1,0 +1,49 @@
+From d7e9f2e3abcfdfbeaae30b9036d72ce50c53d25a Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 29 Oct 2022 18:32:46 +0800
+Subject: [PATCH] Fix an error
+
+
+diff --git a/src/main/java/net/minecraft/server/World.java b/src/main/java/net/minecraft/server/World.java
+index eb496169e..12137c265 100644
+--- a/src/main/java/net/minecraft/server/World.java
++++ b/src/main/java/net/minecraft/server/World.java
+@@ -1521,7 +1521,7 @@ public abstract class World implements IBlockAccess {
+         timings.entityTick.startTiming(); // Spigot
+         // CraftBukkit start - Use field for loop variable
+         co.aikar.timings.TimingHistory.entityTicks += this.entityList.size(); // Paper
+-        worker.execute(AsyncConcurrentTraverseTask.wrapNewTask(this.entityList,entity->{
++        worker.submit(AsyncConcurrentTraverseTask.wrapNewTask(this.entityList,entity->{
+             Entity entity1 = entity.bJ();
+ 
+             if (entity1 != null) {
+@@ -1569,7 +1569,7 @@ public abstract class World implements IBlockAccess {
+             }
+ 
+             this.methodProfiler.b();
+-        },worker));
++        },worker)).join();
+ 
+         timings.entityTick.stopTiming(); // Spigot
+         this.methodProfiler.c("blockEntities");
+@@ -1587,7 +1587,7 @@ public abstract class World implements IBlockAccess {
+         this.O = true;
+         // Spigot start
+         // Iterator iterator = this.tileEntityListTick.iterator();
+-         worker.execute(AsyncConcurrentTraverseTask.wrapNewTask(this.tileEntityListTick,tileentity->{
++         worker.submit(AsyncConcurrentTraverseTask.wrapNewTask(this.tileEntityListTick,tileentity->{
+              // Spigot start
+              if (tileentity == null) {
+                  getServer().getLogger().severe("Spigot has detected a null entity and has removed it, preventing a crash");
+@@ -1639,7 +1639,7 @@ public abstract class World implements IBlockAccess {
+                      // Paper end
+                  }
+              }
+-         },worker));
++         },worker)).join();
+         timings.tileEntityTick.stopTiming(); // Spigot
+         timings.tileEntityPending.startTiming(); // Spigot
+         this.O = false;
+-- 
+2.34.1
+
