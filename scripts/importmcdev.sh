@@ -129,6 +129,7 @@ import Path
 import PathEntity
 import Pathfinder
 import PathfinderFlying
+import NavigationListener
 
 cd "$workdir/Spigot/Spigot-Server/"
 rm -rf nms-patches applyPatches.sh makePatches.sh >/dev/null 2>&1
