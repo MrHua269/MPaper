@@ -1,0 +1,80 @@
+From c35440934a8a717d85719d3375556e6b106b8762 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 29 Oct 2022 18:48:53 +0800
+Subject: [PATCH] Change ConcurrentArrayList to CopyOnWriteArrayList in
+ World.java
+
+
+diff --git a/src/main/java/net/minecraft/server/World.java b/src/main/java/net/minecraft/server/World.java
+index 12137c265..79eb74ed0 100644
+--- a/src/main/java/net/minecraft/server/World.java
++++ b/src/main/java/net/minecraft/server/World.java
+@@ -14,6 +14,7 @@ import java.util.List;
+ import java.util.Random;
+ import java.util.UUID;
+ import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.CopyOnWriteArrayList;
+ import java.util.concurrent.ForkJoinPool;
+ import java.util.function.Supplier;
+ import javax.annotation.Nullable;
+@@ -51,15 +52,15 @@ public abstract class World implements IBlockAccess {
+     protected boolean d;
+     // Spigot start - guard entity list from removals
+     public static final boolean DEBUG_ENTITIES = Boolean.getBoolean("debug.entities"); // Paper
+-    public final List<Entity> entityList = new ConcurrentArrayList<>();
++    public final List<Entity> entityList = new CopyOnWriteArrayList<>();
+     // Spigot end
+     protected final Set<Entity> f = Sets.newConcurrentHashSet(); public Set<Entity> getEntityUnloadQueue() { return f; };// Paper - OBFHELPER
+     //public final List<TileEntity> tileEntityList = Lists.newArrayList(); // Paper - remove unused list
+-    public final List<TileEntity> tileEntityListTick = new ConcurrentArrayList<>();
+-    private final List<TileEntity> b = new ConcurrentArrayList<>();
++    public final List<TileEntity> tileEntityListTick = new CopyOnWriteArrayList<>();
++    private final List<TileEntity> b = new CopyOnWriteArrayList<>();
+     private final Set<TileEntity> tileEntityListUnload = Sets.newConcurrentHashSet(); // Paper
+     public final List<EntityHuman> players = new ConcurrentArrayList<>();
+-    public final List<Entity> j = new ConcurrentArrayList<>();
++    public final List<Entity> j =  new CopyOnWriteArrayList<>();
+     protected final IntHashMap<Entity> entitiesById = new IntHashMap();
+     private final long K = 16777215L;
+     private int L; private int getSkylightSubtracted() { return this.L; } // Paper - OBFHELPER
+@@ -2120,14 +2121,11 @@ public abstract class World implements IBlockAccess {
+             // CraftBukkit end
+                 if (this.O) {
+                     tileentity.setPosition(blockposition);
+-                    Iterator iterator = this.b.iterator();
+-
+-                    while (iterator.hasNext()) {
+-                        TileEntity tileentity1 = (TileEntity) iterator.next();
+ 
++                    for (TileEntity tileentity1 : this.b) {
+                         if (tileentity1.getPosition().equals(blockposition)) {
+                             tileentity1.z();
+-                            iterator.remove();
++                            this.b.remove(tileentity1);
+                         }
+                     }
+ 
+@@ -2672,10 +2670,8 @@ public abstract class World implements IBlockAccess {
+ 
+     public int a(Class<?> oclass) {
+         int i = 0;
+-        Iterator iterator = this.entityList.iterator();
+ 
+-        while (iterator.hasNext()) {
+-            Entity entity = (Entity) iterator.next();
++        for (Entity entity : this.entityList) {
+             if (entity.shouldBeRemoved) continue; // Paper
+             // CraftBukkit start - Split out persistent check, don't apply it to special persistent mobs
+             if (entity instanceof EntityInsentient) {
+@@ -2686,7 +2682,7 @@ public abstract class World implements IBlockAccess {
+             }
+ 
+             if (oclass.isAssignableFrom(entity.getClass())) {
+-            // if ((!(entity instanceof EntityInsentient) || !((EntityInsentient) entity).isPersistent()) && oclass.isAssignableFrom(entity.getClass())) {
++                // if ((!(entity instanceof EntityInsentient) || !((EntityInsentient) entity).isPersistent()) && oclass.isAssignableFrom(entity.getClass())) {
+                 // CraftBukkit end
+                 ++i;
+             }
+-- 
+2.34.1
+
