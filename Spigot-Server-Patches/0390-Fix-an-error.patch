@@ -1,0 +1,144 @@
+From 4c6fc6fb53f27a7f255b46b33a497b1fa53baaa7 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 29 Oct 2022 18:25:28 +0800
+Subject: [PATCH] Fix an error
+
+
+diff --git a/src/main/java/net/minecraft/server/World.java b/src/main/java/net/minecraft/server/World.java
+index 5397728c5..eb496169e 100644
+--- a/src/main/java/net/minecraft/server/World.java
++++ b/src/main/java/net/minecraft/server/World.java
+@@ -1521,7 +1521,7 @@ public abstract class World implements IBlockAccess {
+         timings.entityTick.startTiming(); // Spigot
+         // CraftBukkit start - Use field for loop variable
+         co.aikar.timings.TimingHistory.entityTicks += this.entityList.size(); // Paper
+-        AsyncConcurrentTraverseTask.wrapNewTask(this.entityList,entity->{
++        worker.execute(AsyncConcurrentTraverseTask.wrapNewTask(this.entityList,entity->{
+             Entity entity1 = entity.bJ();
+ 
+             if (entity1 != null) {
+@@ -1569,7 +1569,7 @@ public abstract class World implements IBlockAccess {
+             }
+ 
+             this.methodProfiler.b();
+-        },worker);
++        },worker));
+ 
+         timings.entityTick.stopTiming(); // Spigot
+         this.methodProfiler.c("blockEntities");
+@@ -1587,59 +1587,59 @@ public abstract class World implements IBlockAccess {
+         this.O = true;
+         // Spigot start
+         // Iterator iterator = this.tileEntityListTick.iterator();
+-        AsyncConcurrentTraverseTask.wrapNewTask(this.tileEntityListTick,tileentity->{
+-            // Spigot start
+-            if (tileentity == null) {
+-                getServer().getLogger().severe("Spigot has detected a null entity and has removed it, preventing a crash");
+-                this.tileEntityListTick.remove(tileentity);
+-                return;
+-            }
+-            // Spigot end
+-
+-            if (!tileentity.y() && tileentity.u()) {
+-                BlockPosition blockposition = tileentity.getPosition();
+-
+-                // Paper start - Skip ticking in chunks scheduled for unload
+-                net.minecraft.server.Chunk chunk = tileentity.getCurrentChunk();
+-                boolean shouldTick = chunk != null;
+-                if(this.paperConfig.skipEntityTickingInChunksScheduledForUnload)
+-                    shouldTick = shouldTick && !chunk.isUnloading() && chunk.scheduledForUnload == null;
+-                if (shouldTick && this.P.a(blockposition)) {
+-                    // Paper end
+-                    try {
+-                        this.methodProfiler.a(() -> {
+-                            return String.valueOf(TileEntity.a(tileentity.getClass()));
+-                        });
+-                        tileentity.tickTimer.startTiming(); // Spigot
+-                        ((ITickable) tileentity).e();
+-                        this.methodProfiler.b();
+-                    } catch (Throwable throwable2) {
+-                        // Paper start - Prevent tile entity and entity crashes
+-                        String msg = "TileEntity threw exception at " + tileentity.world.getWorld().getName() + ":" + tileentity.position.getX() + "," + tileentity.position.getY() + "," + tileentity.position.getZ();
+-                        throwable2.printStackTrace();
+-                        getServer().getPluginManager().callEvent(new ServerExceptionEvent(new ServerInternalException(msg, throwable2)));
+-                        return;
+-                        // Paper end
+-                    }
+-                    // Spigot start
+-                    finally {
+-                        tileentity.tickTimer.stopTiming();
+-                    }
+-                    // Spigot end
+-                }
+-            }
+-
+-            if (tileentity.y()) {
+-                this.tileEntityListTick.remove(tileentity);
+-                //this.tileEntityList.remove(tileentity); // Paper - remove unused list
+-                // Paper start
+-                net.minecraft.server.Chunk chunk = tileentity.getCurrentChunk();
+-                if (chunk != null) {
+-                    chunk.removeTileEntity(tileentity.getPosition());
+-                    // Paper end
+-                }
+-            }
+-        },worker);
++         worker.execute(AsyncConcurrentTraverseTask.wrapNewTask(this.tileEntityListTick,tileentity->{
++             // Spigot start
++             if (tileentity == null) {
++                 getServer().getLogger().severe("Spigot has detected a null entity and has removed it, preventing a crash");
++                 this.tileEntityListTick.remove(tileentity);
++                 return;
++             }
++             // Spigot end
++
++             if (!tileentity.y() && tileentity.u()) {
++                 BlockPosition blockposition = tileentity.getPosition();
++
++                 // Paper start - Skip ticking in chunks scheduled for unload
++                 net.minecraft.server.Chunk chunk = tileentity.getCurrentChunk();
++                 boolean shouldTick = chunk != null;
++                 if(this.paperConfig.skipEntityTickingInChunksScheduledForUnload)
++                     shouldTick = shouldTick && !chunk.isUnloading() && chunk.scheduledForUnload == null;
++                 if (shouldTick && this.P.a(blockposition)) {
++                     // Paper end
++                     try {
++                         this.methodProfiler.a(() -> {
++                             return String.valueOf(TileEntity.a(tileentity.getClass()));
++                         });
++                         tileentity.tickTimer.startTiming(); // Spigot
++                         ((ITickable) tileentity).e();
++                         this.methodProfiler.b();
++                     } catch (Throwable throwable2) {
++                         // Paper start - Prevent tile entity and entity crashes
++                         String msg = "TileEntity threw exception at " + tileentity.world.getWorld().getName() + ":" + tileentity.position.getX() + "," + tileentity.position.getY() + "," + tileentity.position.getZ();
++                         throwable2.printStackTrace();
++                         getServer().getPluginManager().callEvent(new ServerExceptionEvent(new ServerInternalException(msg, throwable2)));
++                         return;
++                         // Paper end
++                     }
++                     // Spigot start
++                     finally {
++                         tileentity.tickTimer.stopTiming();
++                     }
++                     // Spigot end
++                 }
++             }
++
++             if (tileentity.y()) {
++                 this.tileEntityListTick.remove(tileentity);
++                 //this.tileEntityList.remove(tileentity); // Paper - remove unused list
++                 // Paper start
++                 net.minecraft.server.Chunk chunk = tileentity.getCurrentChunk();
++                 if (chunk != null) {
++                     chunk.removeTileEntity(tileentity.getPosition());
++                     // Paper end
++                 }
++             }
++         },worker));
+         timings.tileEntityTick.stopTiming(); // Spigot
+         timings.tileEntityPending.startTiming(); // Spigot
+         this.O = false;
+-- 
+2.34.1
+
