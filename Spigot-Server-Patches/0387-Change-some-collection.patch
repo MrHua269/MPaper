@@ -1,0 +1,808 @@
+From a66e96ea2f486e2152e198faddcdb4becdb475cc Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 29 Oct 2022 17:16:09 +0800
+Subject: [PATCH] Change some collection
+
+
+diff --git a/src/main/java/net/minecraft/server/Chunk.java b/src/main/java/net/minecraft/server/Chunk.java
+index 4060fd274..908478239 100644
+--- a/src/main/java/net/minecraft/server/Chunk.java
++++ b/src/main/java/net/minecraft/server/Chunk.java
+@@ -15,6 +15,7 @@ import java.util.Iterator;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Random;
++import java.util.concurrent.ConcurrentHashMap;
+ import java.util.concurrent.ConcurrentLinkedQueue;
+ import javax.annotation.Nullable;
+ import org.apache.logging.log4j.LogManager;
+@@ -45,7 +46,7 @@ public class Chunk {
+     // Paper start
+     public final co.aikar.util.Counter<String> entityCounts = new co.aikar.util.Counter<>();
+     public final co.aikar.util.Counter<String> tileEntityCounts = new co.aikar.util.Counter<>();
+-    private class TileEntityHashMap extends java.util.HashMap<BlockPosition, TileEntity> {
++    private class TileEntityHashMap extends ConcurrentHashMap<BlockPosition, TileEntity> {
+         @Override
+         public TileEntity put(BlockPosition key, TileEntity value) {
+             TileEntity replaced = super.put(key, value);
+@@ -716,7 +717,9 @@ public class Chunk {
+         {
+             if ( creatureType.a().isAssignableFrom( entity.getClass() ) )
+             {
+-                this.entityCount.adjustOrPutValue( creatureType.a(), 1, 1 );
++                synchronized (this){
++                    this.entityCount.adjustOrPutValue( creatureType.a(), 1, 1 );
++                }
+             }
+         }
+         // Spigot end
+@@ -762,7 +765,9 @@ public class Chunk {
+         {
+             if ( creatureType.a().isAssignableFrom( entity.getClass() ) )
+             {
+-                this.entityCount.adjustValue( creatureType.a(), -1 );
++                synchronized (this){
++                    this.entityCount.adjustValue( creatureType.a(), -1 );
++                }
+             }
+         }
+         // Spigot end
+diff --git a/src/main/java/net/minecraft/server/CombatTracker.java b/src/main/java/net/minecraft/server/CombatTracker.java
+index bddd66e79..f8cc4e93f 100644
+--- a/src/main/java/net/minecraft/server/CombatTracker.java
++++ b/src/main/java/net/minecraft/server/CombatTracker.java
+@@ -1,13 +1,15 @@
+ package net.minecraft.server;
+ 
+ import com.google.common.collect.Lists;
++import org.threadly.concurrent.collections.ConcurrentArrayList;
++
+ import java.util.Iterator;
+ import java.util.List;
+ import javax.annotation.Nullable;
+ 
+ public class CombatTracker {
+ 
+-    private final List<CombatEntry> a = Lists.newArrayList();
++    private final List<CombatEntry> a = new ConcurrentArrayList<>();
+     private final EntityLiving b;
+     private int c;
+     private int d;
+diff --git a/src/main/java/net/minecraft/server/Entity.java b/src/main/java/net/minecraft/server/Entity.java
+index 74bbba011..4eb26696a 100644
+--- a/src/main/java/net/minecraft/server/Entity.java
++++ b/src/main/java/net/minecraft/server/Entity.java
+@@ -40,6 +40,7 @@ import org.bukkit.event.entity.EntityAirChangeEvent;
+ import org.bukkit.event.entity.EntityCombustEvent;
+ import org.bukkit.event.entity.EntityPortalEvent;
+ import org.bukkit.plugin.PluginManager;
++import org.threadly.concurrent.collections.ConcurrentArrayList;
+ // CraftBukkit end
+ 
+ public abstract class Entity implements ICommandListener, KeyedObject { // Paper
+@@ -48,15 +49,9 @@ public abstract class Entity implements ICommandListener, KeyedObject { // Paper
+     private static final int CURRENT_LEVEL = 2;
+     // Paper start
+     public static Random SHARED_RANDOM = new Random() {
+-        private boolean locked = false;
+         @Override
+         public synchronized void setSeed(long seed) {
+-            if (locked) {
+-                LogManager.getLogger().error("Ignoring setSeed on Entity.SHARED_RANDOM", new Throwable());
+-            } else {
+-                super.setSeed(seed);
+-                locked = true;
+-            }
++            super.setSeed(seed);
+         }
+     };
+     List<Entity> entitySlice = null;
+@@ -198,7 +193,7 @@ public abstract class Entity implements ICommandListener, KeyedObject { // Paper
+ 
+     public Entity(World world) {
+         this.id = Entity.entityCount++;
+-        this.passengers = Lists.newArrayList();
++        this.passengers = new ConcurrentArrayList<>();
+         this.boundingBox = Entity.c;
+         this.width = 0.6F;
+         this.length = 1.8F;
+diff --git a/src/main/java/net/minecraft/server/EntityLiving.java b/src/main/java/net/minecraft/server/EntityLiving.java
+index 82c3a84ed..c04d1f47a 100644
+--- a/src/main/java/net/minecraft/server/EntityLiving.java
++++ b/src/main/java/net/minecraft/server/EntityLiving.java
+@@ -33,6 +33,7 @@ import org.bukkit.event.player.PlayerItemConsumeEvent;
+ // CraftBukkit end
+ 
+ import co.aikar.timings.MinecraftTimings; // Paper
++import org.threadly.concurrent.collections.ConcurrentArrayList;
+ 
+ public abstract class EntityLiving extends Entity {
+ 
+@@ -46,7 +47,7 @@ public abstract class EntityLiving extends Entity {
+     private static final DataWatcherObject<Integer> br = DataWatcher.a(EntityLiving.class, DataWatcherRegistry.b);
+     private AttributeMapBase attributeMap;
+     public CombatTracker combatTracker = new CombatTracker(this);
+-    public final Map<MobEffectList, MobEffect> effects = Maps.newHashMap();
++    public final Map<MobEffectList, MobEffect> effects = Maps.newConcurrentMap();
+     private final NonNullList<ItemStack> bv;
+     private final NonNullList<ItemStack> bw;
+     public boolean au;
+@@ -113,7 +114,7 @@ public abstract class EntityLiving extends Entity {
+     public int expToDrop;
+     public int maxAirTicks = 300;
+     boolean forceDrops;
+-    ArrayList<org.bukkit.inventory.ItemStack> drops = new ArrayList<org.bukkit.inventory.ItemStack>();
++    ArrayList<org.bukkit.inventory.ItemStack> drops = new ConcurrentArrayList<>();
+     public org.bukkit.craftbukkit.attribute.CraftAttributeMap craftAttributes;
+     public boolean collides = true;
+     public boolean canPickUpLoot;
+diff --git a/src/main/java/net/minecraft/server/EntityPlayer.java b/src/main/java/net/minecraft/server/EntityPlayer.java
+index cb2c459ae..b31136a5f 100644
+--- a/src/main/java/net/minecraft/server/EntityPlayer.java
++++ b/src/main/java/net/minecraft/server/EntityPlayer.java
+@@ -9,6 +9,7 @@ import java.util.Collection;
+ import java.util.Deque; // Paper
+ import java.util.Iterator;
+ import java.util.List;
++import java.util.concurrent.ConcurrentLinkedDeque;
+ import javax.annotation.Nullable;
+ import org.apache.logging.log4j.LogManager;
+ import org.apache.logging.log4j.Logger;
+@@ -40,7 +41,7 @@ public class EntityPlayer extends EntityHuman implements ICrafting {
+     public final PlayerInteractManager playerInteractManager;
+     public double d;
+     public double e;
+-    public final Deque<Integer> removeQueue = new ArrayDeque<>(); // Paper
++    public final Deque<Integer> removeQueue = new ConcurrentLinkedDeque<>(); // Paper
+     private final AdvancementDataPlayer bY;
+     private final ServerStatisticManager bZ;
+     private float ca = Float.MIN_VALUE;
+diff --git a/src/main/java/net/minecraft/server/EntityTracker.java b/src/main/java/net/minecraft/server/EntityTracker.java
+index a60f94608..c0899bacd 100644
+--- a/src/main/java/net/minecraft/server/EntityTracker.java
++++ b/src/main/java/net/minecraft/server/EntityTracker.java
+@@ -12,7 +12,7 @@ public class EntityTracker {
+ 
+     private static final Logger a = LogManager.getLogger();
+     private final WorldServer world;
+-    private final Set<EntityTrackerEntry> c = Sets.newHashSet();
++    private final Set<EntityTrackerEntry> c = Sets.newConcurrentHashSet();
+     public final IntHashMap<EntityTrackerEntry> trackedEntities = new IntHashMap();
+     private int e;
+ 
+@@ -29,11 +29,7 @@ public class EntityTracker {
+         if (entity instanceof EntityPlayer) {
+             this.addEntity(entity, 512, 2);
+             EntityPlayer entityplayer = (EntityPlayer) entity;
+-            Iterator iterator = this.c.iterator();
+-
+-            while (iterator.hasNext()) {
+-                EntityTrackerEntry entitytrackerentry = (EntityTrackerEntry) iterator.next();
+-
++            for (EntityTrackerEntry entitytrackerentry : this.c) {
+                 if (entitytrackerentry.b() != entityplayer) {
+                     entitytrackerentry.updatePlayer(entityplayer);
+                 }
+@@ -109,7 +105,7 @@ public class EntityTracker {
+         i = org.spigotmc.TrackingRange.getEntityTrackingRange(entity, i); // Spigot
+         try {
+             if (this.trackedEntities.b(entity.getId())) {
+-                throw new IllegalStateException("Entity is already tracked!");
++                return;
+             }
+ 
+             EntityTrackerEntry entitytrackerentry = new EntityTrackerEntry(entity, i, this.e, j, flag);
+diff --git a/src/main/java/net/minecraft/server/EntityTrackerEntry.java b/src/main/java/net/minecraft/server/EntityTrackerEntry.java
+index efc4c79ab..8645fbee2 100644
+--- a/src/main/java/net/minecraft/server/EntityTrackerEntry.java
++++ b/src/main/java/net/minecraft/server/EntityTrackerEntry.java
+@@ -6,6 +6,8 @@ import java.util.Collections;
+ import java.util.Iterator;
+ import java.util.List;
+ import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
++
+ import org.apache.logging.log4j.LogManager;
+ import org.apache.logging.log4j.Logger;
+ 
+@@ -37,14 +39,14 @@ public class EntityTrackerEntry {
+     private boolean isMoving;
+     private final boolean u;
+     private int v;
+-    private List<Entity> w = Collections.emptyList();
++    private List<Entity> w = Collections.synchronizedList(Collections.emptyList());
+     private boolean x;
+     private boolean y;
+     public boolean b;
+     // Paper start
+     // Replace trackedPlayers Set with a Map. The value is true until the player receives
+     // their first update (which is forced to have absolute coordinates), false afterward.
+-    public java.util.Map<EntityPlayer, Boolean> trackedPlayerMap = new java.util.HashMap<EntityPlayer, Boolean>();
++    public java.util.Map<EntityPlayer, Boolean> trackedPlayerMap = new ConcurrentHashMap<>();
+     public Set<EntityPlayer> trackedPlayers = trackedPlayerMap.keySet();
+     // Paper end
+ 
+diff --git a/src/main/java/net/minecraft/server/NavigationAbstract.java b/src/main/java/net/minecraft/server/NavigationAbstract.java
+index 935b2e81e..d97f8250c 100644
+--- a/src/main/java/net/minecraft/server/NavigationAbstract.java
++++ b/src/main/java/net/minecraft/server/NavigationAbstract.java
+@@ -4,10 +4,11 @@ import javax.annotation.Nullable;
+ 
+ public abstract class NavigationAbstract {
+ 
+-    protected EntityInsentient a; public Entity getEntity() { return a; } // Paper - OBFHELPER
+-    protected World b;
++    protected volatile EntityInsentient a;
++    public Entity getEntity() { return a; } // Paper - OBFHELPER
++    protected volatile World b;
+     @Nullable
+-    protected PathEntity c;
++    protected volatile PathEntity c;
+     protected double d;
+     private final AttributeInstance i;
+     protected int e;
+@@ -48,7 +49,7 @@ public abstract class NavigationAbstract {
+         return this.g;
+     }
+ 
+-    public void k() {
++    public synchronized void k() {
+         if (this.b.getTime() - this.p > 20L) {
+             if (this.q != null) {
+                 this.c = null;
+diff --git a/src/main/java/net/minecraft/server/NavigationListener.java b/src/main/java/net/minecraft/server/NavigationListener.java
+index b287c1d8f..acac9aada 100644
+--- a/src/main/java/net/minecraft/server/NavigationListener.java
++++ b/src/main/java/net/minecraft/server/NavigationListener.java
+@@ -1,22 +1,16 @@
+ package net.minecraft.server;
+ 
+-import com.google.common.collect.Lists;
++import org.threadly.concurrent.collections.ConcurrentArrayList;
+ import java.util.List;
+ import javax.annotation.Nullable;
+ 
+ public class NavigationListener implements IWorldAccess {
+ 
+-    private final List<NavigationAbstract> a = Lists.newArrayList();
+-
+-    public NavigationListener() {}
++    private final List<NavigationAbstract> a = new ConcurrentArrayList<>();
+ 
+     public void a(World world, BlockPosition blockposition, IBlockData iblockdata, IBlockData iblockdata1, int i) {
+         if (this.a(world, blockposition, iblockdata, iblockdata1)) {
+-            int j = 0;
+-
+-            for (int k = this.a.size(); j < k; ++j) {
+-                NavigationAbstract navigationabstract = (NavigationAbstract) this.a.get(j);
+-
++            for(NavigationAbstract navigationabstract : this.a){
+                 if (navigationabstract != null && !navigationabstract.j()) {
+                     PathEntity pathentity = navigationabstract.l();
+ 
+@@ -31,7 +25,6 @@ public class NavigationListener implements IWorldAccess {
+                     }
+                 }
+             }
+-
+         }
+     }
+ 
+diff --git a/src/main/java/net/minecraft/server/PaperLightingQueue.java b/src/main/java/net/minecraft/server/PaperLightingQueue.java
+index f1c013116..8af88ab54 100644
+--- a/src/main/java/net/minecraft/server/PaperLightingQueue.java
++++ b/src/main/java/net/minecraft/server/PaperLightingQueue.java
+@@ -4,6 +4,7 @@ import co.aikar.timings.Timing;
+ import it.unimi.dsi.fastutil.objects.ObjectCollection;
+ 
+ import java.util.ArrayDeque;
++import java.util.concurrent.ConcurrentLinkedDeque;
+ 
+ class PaperLightingQueue {
+     private static final long MAX_TIME = (long) (1000000000 / 20 * 1.15);
+@@ -31,7 +32,7 @@ class PaperLightingQueue {
+         }
+     }
+ 
+-    static class LightingQueue extends ArrayDeque<Runnable> {
++    static class LightingQueue extends ConcurrentLinkedDeque<Runnable> {
+         final private Chunk chunk;
+ 
+         LightingQueue(Chunk chunk) {
+diff --git a/src/main/java/net/minecraft/server/PlayerChunk.java b/src/main/java/net/minecraft/server/PlayerChunk.java
+index baf72404e..92229b3cf 100644
+--- a/src/main/java/net/minecraft/server/PlayerChunk.java
++++ b/src/main/java/net/minecraft/server/PlayerChunk.java
+@@ -10,13 +10,14 @@ import org.apache.logging.log4j.LogManager;
+ import org.apache.logging.log4j.Logger;
+ // CraftBukkit Start
+ import org.bukkit.craftbukkit.chunkio.ChunkIOExecutor;
++import org.threadly.concurrent.collections.ConcurrentArrayList;
+ // CraftBukkit end
+ 
+ public class PlayerChunk {
+ 
+     private static final Logger a = LogManager.getLogger();
+     private final PlayerChunkMap playerChunkMap;
+-    public final List<EntityPlayer> c = Lists.newArrayList(); // CraftBukkit - public
++    public final List<EntityPlayer> c = new ConcurrentArrayList<>(); // CraftBukkit - public
+     private final ChunkCoordIntPair location;
+     private final short[] dirtyBlocks = new short[64];
+     @Nullable
+diff --git a/src/main/java/net/minecraft/server/SpawnerCreature.java b/src/main/java/net/minecraft/server/SpawnerCreature.java
+index 5c5bed034..bdc903bcd 100644
+--- a/src/main/java/net/minecraft/server/SpawnerCreature.java
++++ b/src/main/java/net/minecraft/server/SpawnerCreature.java
+@@ -27,7 +27,9 @@ public final class SpawnerCreature {
+         if (true) {
+             int sum = 0;
+             for (Chunk c : server.getChunkProviderServer().chunks.values()) {
+-                sum += c.entityCount.get(oClass);
++                synchronized (this){
++                    sum += c.entityCount.get(oClass);
++                }
+             }
+             return sum;
+         }
+@@ -41,7 +43,9 @@ public final class SpawnerCreature {
+             int z = LongHash.lsw( coord );
+             if ( !((ChunkProviderServer)server.chunkProvider).unloadQueue.contains( coord ) && server.isChunkLoaded( x, z, true ) )
+             {
+-                i += server.getChunkAt( x, z ).entityCount.get( oClass );
++                synchronized (this){
++                    i += server.getChunkAt( x, z ).entityCount.get( oClass );
++                }
+             }
+         }
+         return i;
+diff --git a/src/main/java/net/minecraft/server/WorldServer.java b/src/main/java/net/minecraft/server/WorldServer.java
+index e545e9764..af4dedd2c 100644
+--- a/src/main/java/net/minecraft/server/WorldServer.java
++++ b/src/main/java/net/minecraft/server/WorldServer.java
+@@ -31,6 +31,7 @@ import org.bukkit.craftbukkit.util.HashTreeSet;
+ import org.bukkit.event.block.BlockFormEvent;
+ import org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason;
+ import org.bukkit.event.weather.LightningStrikeEvent;
++import org.threadly.concurrent.collections.ConcurrentArrayList;
+ // CraftBukkit end
+ 
+ public class WorldServer extends World implements IAsyncTaskHandler {
+@@ -42,7 +43,7 @@ public class WorldServer extends World implements IAsyncTaskHandler {
+     private final PlayerChunkMap manager;
+     // private final Set<NextTickListEntry> nextTickListHash = Sets.newHashSet();
+     private final HashTreeSet<NextTickListEntry> nextTickList = new HashTreeSet<NextTickListEntry>(); // CraftBukkit - HashTreeSet
+-    public final Map<UUID, Entity> entitiesByUUID = Maps.newHashMap(); // Paper
++    public final Map<UUID, Entity> entitiesByUUID = Maps.newConcurrentMap(); // Paper
+     public boolean savingDisabled;
+     private boolean Q;
+     private int emptyTime;
+@@ -51,7 +52,7 @@ public class WorldServer extends World implements IAsyncTaskHandler {
+     protected final VillageSiege siegeManager = new VillageSiege(this);
+     private final WorldServer.BlockActionDataList[] U = new WorldServer.BlockActionDataList[] { new WorldServer.BlockActionDataList(null), new WorldServer.BlockActionDataList(null)};
+     private int V;
+-    private final List<NextTickListEntry> W = Lists.newArrayList();
++    private final List<NextTickListEntry> W = new ConcurrentArrayList<>();
+ 
+     // CraftBukkit start
+     private static Throwable getAddToWorldStackTrace(Entity entity) {
+@@ -687,8 +688,8 @@ public class WorldServer extends World implements IAsyncTaskHandler {
+         super.l();
+         this.methodProfiler.c("players");
+ 
+-        for (int i = 0; i < this.players.size(); ++i) {
+-            Entity entity = (Entity) this.players.get(i);
++        for (EntityHuman player : this.players) {
++            Entity entity = (Entity) player;
+             Entity entity1 = entity.bJ();
+ 
+             if (entity1 != null) {
+@@ -741,75 +742,71 @@ public class WorldServer extends World implements IAsyncTaskHandler {
+         } else {
+             int i = this.nextTickList.size();
+ 
+-            if (false) { // CraftBukkit
+-                throw new IllegalStateException("TickNextTick list out of synch");
+-            } else {
+-                if (i > 65536) {
+-                    // CraftBukkit start - If the server has too much to process over time, try to alleviate that
+-                    if (i > 20 * 65536) {
+-                        i = i / 20;
+-                    } else {
+-                        i = 65536;
+-                    }
+-                    // CraftBukkit end
++            if (i > 65536) {
++                // CraftBukkit start - If the server has too much to process over time, try to alleviate that
++                if (i > 20 * 65536) {
++                    i = i / 20;
++                } else {
++                    i = 65536;
+                 }
++                // CraftBukkit end
++            }
+ 
+-                this.methodProfiler.a("cleaning");
+-
+-                timings.scheduledBlocksCleanup.startTiming(); // Paper
+-                NextTickListEntry nextticklistentry;
++            this.methodProfiler.a("cleaning");
+ 
+-                for (int j = 0; j < i; ++j) {
+-                    nextticklistentry = (NextTickListEntry) this.nextTickList.first();
+-                    if (!flag && nextticklistentry.b > this.worldData.getTime()) {
+-                        break;
+-                    }
++            timings.scheduledBlocksCleanup.startTiming(); // Paper
++            NextTickListEntry nextticklistentry;
+ 
+-                    // CraftBukkit - use nextTickList
+-                    this.nextTickList.remove(nextticklistentry);
+-                    // this.nextTickListHash.remove(nextticklistentry);
+-                    this.W.add(nextticklistentry);
++            for (int j = 0; j < i; ++j) {
++                nextticklistentry = (NextTickListEntry) this.nextTickList.first();
++                if (!flag && nextticklistentry.b > this.worldData.getTime()) {
++                    break;
+                 }
+-                timings.scheduledBlocksCleanup.stopTiming(); // Paper
+-
+-                this.methodProfiler.b();
+-                this.methodProfiler.a("ticking");
+-                Iterator iterator = this.W.iterator();
+-                timings.scheduledBlocksTicking.startTiming(); // Paper
+-
+-                while (iterator.hasNext()) {
+-                    nextticklistentry = (NextTickListEntry) iterator.next();
+-                    iterator.remove();
+-                    boolean flag1 = false;
+-
+-                    if (this.areChunksLoadedBetween(nextticklistentry.a.a(0, 0, 0), nextticklistentry.a.a(0, 0, 0))) {
+-                        IBlockData iblockdata = this.getType(nextticklistentry.a);
+-                        co.aikar.timings.Timing timing = iblockdata.getBlock().getTiming(); // Paper
+-                        timing.startTiming(); // Paper
+-
+-                        if (iblockdata.getMaterial() != Material.AIR && Block.a(iblockdata.getBlock(), nextticklistentry.a())) {
+-                            try {
+-                                stopPhysicsEvent = !paperConfig.firePhysicsEventForRedstone && (iblockdata.getBlock() instanceof BlockDiodeAbstract || iblockdata.getBlock() instanceof BlockRedstoneTorch); // Paper
+-                                iblockdata.getBlock().b((World) this, nextticklistentry.a, iblockdata, this.random);
+-                            } catch (Throwable throwable) {
+-                                CrashReport crashreport = CrashReport.a(throwable, "Exception while ticking a block");
+-                                CrashReportSystemDetails crashreportsystemdetails = crashreport.a("Block being ticked");
+-
+-                                CrashReportSystemDetails.a(crashreportsystemdetails, nextticklistentry.a, iblockdata);
+-                                throw new ReportedException(crashreport);
+-                            } finally { stopPhysicsEvent = false; } // Paper
+-                        }
+-                        timing.stopTiming(); // Paper
+-                    } else {
+-                        this.a(nextticklistentry.a, nextticklistentry.a(), 0);
++
++                // CraftBukkit - use nextTickList
++                this.nextTickList.remove(nextticklistentry);
++                // this.nextTickListHash.remove(nextticklistentry);
++                this.W.add(nextticklistentry);
++            }
++            timings.scheduledBlocksCleanup.stopTiming(); // Paper
++
++            this.methodProfiler.b();
++            this.methodProfiler.a("ticking");
++            Iterator iterator = this.W.iterator();
++            timings.scheduledBlocksTicking.startTiming(); // Paper
++
++            while (iterator.hasNext()) {
++                nextticklistentry = (NextTickListEntry) iterator.next();
++                iterator.remove();
++                boolean flag1 = false;
++
++                if (this.areChunksLoadedBetween(nextticklistentry.a.a(0, 0, 0), nextticklistentry.a.a(0, 0, 0))) {
++                    IBlockData iblockdata = this.getType(nextticklistentry.a);
++                    co.aikar.timings.Timing timing = iblockdata.getBlock().getTiming(); // Paper
++                    timing.startTiming(); // Paper
++
++                    if (iblockdata.getMaterial() != Material.AIR && Block.a(iblockdata.getBlock(), nextticklistentry.a())) {
++                        try {
++                            stopPhysicsEvent = !paperConfig.firePhysicsEventForRedstone && (iblockdata.getBlock() instanceof BlockDiodeAbstract || iblockdata.getBlock() instanceof BlockRedstoneTorch); // Paper
++                            iblockdata.getBlock().b((World) this, nextticklistentry.a, iblockdata, this.random);
++                        } catch (Throwable throwable) {
++                            CrashReport crashreport = CrashReport.a(throwable, "Exception while ticking a block");
++                            CrashReportSystemDetails crashreportsystemdetails = crashreport.a("Block being ticked");
++
++                            CrashReportSystemDetails.a(crashreportsystemdetails, nextticklistentry.a, iblockdata);
++                            throw new ReportedException(crashreport);
++                        } finally { stopPhysicsEvent = false; } // Paper
+                     }
++                    timing.stopTiming(); // Paper
++                } else {
++                    this.a(nextticklistentry.a, nextticklistentry.a(), 0);
+                 }
+-                timings.scheduledBlocksTicking.stopTiming(); // Paper
+-
+-                this.methodProfiler.b();
+-                this.W.clear();
+-                return !this.nextTickList.isEmpty();
+             }
++            timings.scheduledBlocksTicking.stopTiming(); // Paper
++
++            this.methodProfiler.b();
++            this.W.clear();
++            return !this.nextTickList.isEmpty();
+         }
+     }
+ 
+diff --git a/src/main/java/org/bukkit/craftbukkit/util/HashTreeSet.java b/src/main/java/org/bukkit/craftbukkit/util/HashTreeSet.java
+index cd864c404..6cf723ba5 100644
+--- a/src/main/java/org/bukkit/craftbukkit/util/HashTreeSet.java
++++ b/src/main/java/org/bukkit/craftbukkit/util/HashTreeSet.java
+@@ -11,44 +11,41 @@ public class HashTreeSet<V> implements Set<V> {
+     private Set<V> hash = new it.unimi.dsi.fastutil.objects.ObjectOpenHashSet<V>(); //Paper - Replace java.util.HashSet with ObjectOpenHashSet
+     private TreeSet<V> tree = new TreeSet<V>();
+ 
+-    public HashTreeSet() {
+-
+-    }
+ 
+     @Override
+-    public int size() {
++    public synchronized int size() {
+         return hash.size();
+     }
+ 
+     @Override
+-    public boolean isEmpty() {
++    public synchronized boolean isEmpty() {
+         return hash.isEmpty();
+     }
+ 
+     @Override
+-    public boolean contains(Object o) {
++    public synchronized boolean contains(Object o) {
+         return hash.contains(o);
+     }
+ 
+     @Override
+-    public Iterator<V> iterator() {
++    public synchronized Iterator<V> iterator() {
+         return new Iterator<V>() {
+ 
+             private Iterator<V> it = tree.iterator();
+             private V last;
+ 
+             @Override
+-            public boolean hasNext() {
++            public synchronized boolean hasNext() {
+                 return it.hasNext();
+             }
+ 
+             @Override
+-            public V next() {
++            public synchronized V next() {
+                 return last = it.next();
+             }
+ 
+             @Override
+-            public void remove() {
++            public synchronized void remove() {
+                 if (last == null) {
+                     throw new IllegalStateException();
+                 }
+@@ -60,57 +57,57 @@ public class HashTreeSet<V> implements Set<V> {
+     }
+ 
+     @Override
+-    public Object[] toArray() {
++    public synchronized Object[] toArray() {
+         return hash.toArray();
+     }
+ 
+     @Override
+-    public Object[] toArray(Object[] a) {
++    public synchronized Object[] toArray(Object[] a) {
+         return hash.toArray(a);
+     }
+ 
+     @Override
+-    public boolean add(V e) {
++    public synchronized boolean add(V e) {
+         hash.add(e);
+         return tree.add(e);
+     }
+ 
+     @Override
+-    public boolean remove(Object o) {
++    public synchronized boolean remove(Object o) {
+         hash.remove(o);
+         return tree.remove(o);
+     }
+ 
+     @Override
+-    public boolean containsAll(Collection c) {
++    public synchronized boolean containsAll(Collection c) {
+         return hash.containsAll(c);
+     }
+ 
+     @Override
+-    public boolean addAll(Collection c) {
++    public synchronized boolean addAll(Collection c) {
+         tree.addAll(c);
+         return hash.addAll(c);
+     }
+ 
+     @Override
+-    public boolean retainAll(Collection c) {
++    public synchronized boolean retainAll(Collection c) {
+         tree.retainAll(c);
+         return hash.retainAll(c);
+     }
+ 
+     @Override
+-    public boolean removeAll(Collection c) {
++    public synchronized boolean removeAll(Collection c) {
+         tree.removeAll(c);
+         return hash.removeAll(c);
+     }
+ 
+     @Override
+-    public void clear() {
++    public synchronized void clear() {
+         hash.clear();
+         tree.clear();
+     }
+ 
+-    public V first() {
++    public synchronized V first() {
+         return tree.first();
+     }
+ 
+diff --git a/src/main/java/org/bukkit/craftbukkit/util/UnsafeList.java b/src/main/java/org/bukkit/craftbukkit/util/UnsafeList.java
+index 08d105603..94ad3e07a 100644
+--- a/src/main/java/org/bukkit/craftbukkit/util/UnsafeList.java
++++ b/src/main/java/org/bukkit/craftbukkit/util/UnsafeList.java
+@@ -43,17 +43,17 @@ public class UnsafeList<E> extends AbstractList<E> implements List<E>, RandomAcc
+         this(32);
+     }
+ 
+-    public E get(int index) {
++    public synchronized E get(int index) {
+         rangeCheck(index);
+ 
+         return (E) data[index];
+     }
+ 
+-    public E unsafeGet(int index) {
++    public synchronized E unsafeGet(int index) {
+         return (E) data[index];
+     }
+ 
+-    public E set(int index, E element) {
++    public synchronized E set(int index, E element) {
+         rangeCheck(index);
+ 
+         E old = (E) data[index];
+@@ -61,20 +61,20 @@ public class UnsafeList<E> extends AbstractList<E> implements List<E>, RandomAcc
+         return old;
+     }
+ 
+-    public boolean add(E element) {
++    public synchronized boolean add(E element) {
+         growIfNeeded();
+         data[size++] = element;
+         return true;
+     }
+ 
+-    public void add(int index, E element) {
++    public synchronized void add(int index, E element) {
+         growIfNeeded();
+         System.arraycopy(data, index, data, index + 1, size - index);
+         data[index] = element;
+         size++;
+     }
+ 
+-    public E remove(int index) {
++    public synchronized E remove(int index) {
+         rangeCheck(index);
+ 
+         E old = (E) data[index];
+@@ -87,7 +87,7 @@ public class UnsafeList<E> extends AbstractList<E> implements List<E>, RandomAcc
+         return old;
+     }
+ 
+-    public boolean remove(Object o) {
++    public synchronized boolean remove(Object o) {
+         int index = indexOf(o);
+         if (index >= 0) {
+             remove(index);
+@@ -97,7 +97,7 @@ public class UnsafeList<E> extends AbstractList<E> implements List<E>, RandomAcc
+         return false;
+     }
+ 
+-    public int indexOf(Object o) {
++    public synchronized int indexOf(Object o) {
+         for (int i = 0; i < size; i++) {
+             if (o == data[i] || o.equals(data[i])) {
+                 return i;
+@@ -107,11 +107,11 @@ public class UnsafeList<E> extends AbstractList<E> implements List<E>, RandomAcc
+         return -1;
+     }
+ 
+-    public boolean contains(Object o) {
++    public synchronized boolean contains(Object o) {
+         return indexOf(o) >= 0;
+     }
+ 
+-    public void clear() {
++    public synchronized void clear() {
+         // Create new array to reset memory usage to initial capacity
+         size = 0;
+ 
+@@ -126,7 +126,7 @@ public class UnsafeList<E> extends AbstractList<E> implements List<E>, RandomAcc
+     }
+ 
+     // actually rounds up to nearest power of two
+-    public void trimToSize() {
++    public synchronized void trimToSize() {
+         int old = data.length;
+         int rounded = Integer.highestOneBit(size - 1) << 1;
+         if (rounded < old) {
+@@ -134,15 +134,15 @@ public class UnsafeList<E> extends AbstractList<E> implements List<E>, RandomAcc
+         }
+     }
+ 
+-    public int size() {
++    public synchronized int size() {
+         return size;
+     }
+ 
+-    public boolean isEmpty() {
++    public synchronized boolean isEmpty() {
+         return size == 0;
+     }
+ 
+-    public Object clone() throws CloneNotSupportedException {
++    public synchronized Object clone() throws CloneNotSupportedException {
+         UnsafeList<E> copy = (UnsafeList<E>) super.clone();
+         copy.data = Arrays.copyOf(data, size);
+         copy.size = size;
+@@ -154,7 +154,7 @@ public class UnsafeList<E> extends AbstractList<E> implements List<E>, RandomAcc
+         return copy;
+     }
+ 
+-    public Iterator<E> iterator() {
++    public synchronized Iterator<E> iterator() {
+         // Try to find an iterator that isn't in use
+         for (Iterator iter : iterPool) {
+             if (!((Itr) iter).valid) {
+@@ -226,19 +226,19 @@ public class UnsafeList<E> extends AbstractList<E> implements List<E>, RandomAcc
+         int expectedModCount = modCount;
+         public boolean valid = true;
+ 
+-        public void reset() {
++        public synchronized void reset() {
+             index = 0;
+             lastRet = -1;
+             expectedModCount = modCount;
+             valid = true;
+         }
+ 
+-        public boolean hasNext() {
++        public synchronized boolean hasNext() {
+             valid = index != size;
+             return valid;
+         }
+ 
+-        public E next() {
++        public synchronized E next() {
+             if (modCount != expectedModCount) {
+                 throw new ConcurrentModificationException();
+             }
+@@ -256,7 +256,7 @@ public class UnsafeList<E> extends AbstractList<E> implements List<E>, RandomAcc
+             return (E) data[lastRet = i];
+         }
+ 
+-        public void remove() {
++        public synchronized void remove() {
+             if (lastRet < 0) {
+                 throw new IllegalStateException();
+             }
+-- 
+2.34.1
+

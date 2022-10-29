@@ -1,0 +1,25 @@
+From b7096eedbdcf04412c2399b4ec41b546ee635b37 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 29 Oct 2022 17:16:09 +0800
+Subject: [PATCH] Change some collection
+
+
+diff --git a/src/main/java/co/aikar/util/Counter.java b/src/main/java/co/aikar/util/Counter.java
+index 23ac07f2..1f3ca264 100644
+--- a/src/main/java/co/aikar/util/Counter.java
++++ b/src/main/java/co/aikar/util/Counter.java
+@@ -4,9 +4,10 @@ import com.google.common.collect.ForwardingMap;
+ 
+ import java.util.HashMap;
+ import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
+ 
+ public class Counter <T> extends ForwardingMap<T, Long> {
+-    private final Map<T, Long> counts = new HashMap<>();
++    private final Map<T, Long> counts = new ConcurrentHashMap<>();
+ 
+     public long decrement(T key) {
+         return increment(key, -1);
+-- 
+2.34.1
+
