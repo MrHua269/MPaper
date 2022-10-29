@@ -1,0 +1,238 @@
+From ebb9a2b0602de0eab41c124abf024372617cab01 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 29 Oct 2022 18:12:52 +0800
+Subject: [PATCH] Parallel entity ticking
+
+
+diff --git a/src/main/java/moe/keyi/concurrent/AsyncConcurrentTraverseTask.java b/src/main/java/moe/keyi/concurrent/AsyncConcurrentTraverseTask.java
+new file mode 100644
+index 000000000..361e59674
+--- /dev/null
++++ b/src/main/java/moe/keyi/concurrent/AsyncConcurrentTraverseTask.java
+@@ -0,0 +1,44 @@
++package moe.keyi.concurrent;
++
++import java.util.Spliterator;
++import java.util.concurrent.ForkJoinPool;
++import java.util.concurrent.RecursiveAction;
++import java.util.function.Consumer;
++
++public class AsyncConcurrentTraverseTask<E> extends RecursiveAction {
++    private final Spliterator<E> spliterator;
++    private final Consumer<E> action;
++    private final long threshold;
++
++    public AsyncConcurrentTraverseTask(Iterable<E> iterable, int threads, Consumer<E> action){
++        this.spliterator = iterable.spliterator();
++        this.action = action;
++        this.threshold = (int)iterable.spliterator().getExactSizeIfKnown() / threads;
++    }
++
++    private AsyncConcurrentTraverseTask(Spliterator<E> spliterator, Consumer<E> action, long t) {
++        this.spliterator = spliterator;
++        this.action = action;
++        this.threshold = t;
++    }
++
++    @Override
++    protected void compute() {
++        if (this.spliterator.getExactSizeIfKnown() <= this.threshold) {
++            this.spliterator.forEachRemaining(o->{
++                try {
++                    this.action.accept(o);
++                }catch (Exception e){
++                    e.printStackTrace();
++                }
++            });
++        } else {
++            new AsyncConcurrentTraverseTask<>(this.spliterator.trySplit(), this.action, this.threshold).fork();
++            new AsyncConcurrentTraverseTask<>(this.spliterator, this.action, this.threshold).fork();
++        }
++    }
++
++    public static <E> AsyncConcurrentTraverseTask<E> wrapNewTask(Iterable<E> input, Consumer<E> action, ForkJoinPool pool){
++        return new AsyncConcurrentTraverseTask<E>(input,pool.getParallelism(),action);
++    }
++}
+diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
+index 3b982f990..8c502eb51 100644
+--- a/src/main/java/net/minecraft/server/MinecraftServer.java
++++ b/src/main/java/net/minecraft/server/MinecraftServer.java
+@@ -1156,7 +1156,7 @@ public abstract class MinecraftServer implements ICommandListener, Runnable, IAs
+     }
+ 
+     public String getServerModName() {
+-        return "Paper"; //Paper - Paper > // Spigot - Spigot > // CraftBukkit - cb > vanilla!
++        return "Keyi"; //Keyi - Keyi > //Paper - Paper > // Spigot - Spigot > // CraftBukkit - cb > vanilla!
+     }
+ 
+     public CrashReport b(CrashReport crashreport) {
+diff --git a/src/main/java/net/minecraft/server/World.java b/src/main/java/net/minecraft/server/World.java
+index f01de511b..8f3cd3003 100644
+--- a/src/main/java/net/minecraft/server/World.java
++++ b/src/main/java/net/minecraft/server/World.java
+@@ -14,6 +14,7 @@ import java.util.List;
+ import java.util.Random;
+ import java.util.UUID;
+ import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.ForkJoinPool;
+ import java.util.function.Supplier;
+ import javax.annotation.Nullable;
+ 
+@@ -21,6 +22,8 @@ import javax.annotation.Nullable;
+ import com.google.common.collect.Maps;
+ import java.util.HashMap; // Paper
+ import java.util.Map;
++
++import moe.keyi.concurrent.AsyncConcurrentTraverseTask;
+ import org.bukkit.Bukkit;
+ import org.bukkit.block.BlockState;
+ import org.bukkit.craftbukkit.CraftServer;
+@@ -1269,9 +1272,6 @@ public abstract class World implements IBlockAccess {
+         // CraftBukkit start - Decrement loop variable field if we've already ticked this entity
+         int index = this.entityList.indexOf(entity);
+         if (index != -1) {
+-            if (index <= this.tickPosition) {
+-                this.tickPosition--;
+-            }
+             this.entityList.remove(index);
+         }
+         // CraftBukkit end
+@@ -1454,15 +1454,16 @@ public abstract class World implements IBlockAccess {
+ 
+     public void b(BlockPosition blockposition, Block block, int i, int j) {}
+ 
++    private static final ForkJoinPool worker = new ForkJoinPool();
++
+     public void tickEntities() {
+         this.methodProfiler.a("entities");
+         this.methodProfiler.a("global");
+ 
+         int i;
+-        Entity entity;
+ 
+         for (i = 0; i < this.j.size(); ++i) {
+-            entity = (Entity) this.j.get(i);
++            Entity entity = (Entity) this.j.get(i);
+             // CraftBukkit start - Fixed an NPE
+             if (entity == null) {
+                 continue;
+@@ -1526,19 +1527,12 @@ public abstract class World implements IBlockAccess {
+         guardEntityList = true; // Spigot
+         // CraftBukkit start - Use field for loop variable
+         co.aikar.timings.TimingHistory.entityTicks += this.entityList.size(); // Paper
+-        int entitiesThisCycle = 0;
+-        // Paper start - Disable tick limiters
+-        //if (tickPosition < 0) tickPosition = 0;
+-        for (tickPosition = 0; tickPosition < entityList.size(); tickPosition++) {
+-            // Paper end
+-            tickPosition = (tickPosition < entityList.size()) ? tickPosition : 0;
+-            entity = (Entity) this.entityList.get(this.tickPosition);
+-            // CraftBukkit end
++        AsyncConcurrentTraverseTask.wrapNewTask(this.entityList,entity->{
+             Entity entity1 = entity.bJ();
+ 
+             if (entity1 != null) {
+                 if (!entity1.dead && entity1.w(entity)) {
+-                    continue;
++                    return;
+                 }
+ 
+                 entity.stopRiding();
+@@ -1554,11 +1548,9 @@ public abstract class World implements IBlockAccess {
+                     entity.tickTimer.stopTiming();
+                     // Paper start - Prevent tile entity and entity crashes
+                     String msg = "Entity threw exception at " + entity.world.getWorld().getName() + ":" + entity.locX + "," + entity.locY + "," + entity.locZ;
+-                    System.err.println(msg);
+                     throwable1.printStackTrace();
+                     getServer().getPluginManager().callEvent(new ServerExceptionEvent(new ServerInternalException(msg, throwable1)));
+-                    entity.dead = true;
+-                    continue;
++                    return;
+                     // Paper end
+                 }
+             }
+@@ -1585,7 +1577,7 @@ public abstract class World implements IBlockAccess {
+             }
+ 
+             this.methodProfiler.b();
+-        }
++        },worker);
+         guardEntityList = false; // Spigot
+ 
+         timings.entityTick.stopTiming(); // Spigot
+@@ -1604,16 +1596,12 @@ public abstract class World implements IBlockAccess {
+         this.O = true;
+         // Spigot start
+         // Iterator iterator = this.tileEntityListTick.iterator();
+-        int tilesThisCycle = 0;
+-        for (tileTickPosition = 0; tileTickPosition < tileEntityListTick.size(); tileTickPosition++) { // Paper - Disable tick limiters
+-            tileTickPosition = (tileTickPosition < tileEntityListTick.size()) ? tileTickPosition : 0;
+-            TileEntity tileentity = (TileEntity) this.tileEntityListTick.get(tileTickPosition);
++        AsyncConcurrentTraverseTask.wrapNewTask(this.tileEntityListTick,tileentity->{
+             // Spigot start
+             if (tileentity == null) {
+                 getServer().getLogger().severe("Spigot has detected a null entity and has removed it, preventing a crash");
+-                tilesThisCycle--;
+-                this.tileEntityListTick.remove(tileTickPosition--);
+-                continue;
++                this.tileEntityListTick.remove(tileentity);
++                return;
+             }
+             // Spigot end
+ 
+@@ -1637,12 +1625,9 @@ public abstract class World implements IBlockAccess {
+                     } catch (Throwable throwable2) {
+                         // Paper start - Prevent tile entity and entity crashes
+                         String msg = "TileEntity threw exception at " + tileentity.world.getWorld().getName() + ":" + tileentity.position.getX() + "," + tileentity.position.getY() + "," + tileentity.position.getZ();
+-                        System.err.println(msg);
+                         throwable2.printStackTrace();
+                         getServer().getPluginManager().callEvent(new ServerExceptionEvent(new ServerInternalException(msg, throwable2)));
+-                        tilesThisCycle--;
+-                        this.tileEntityListTick.remove(tileTickPosition--);
+-                        continue;
++                        return;
+                         // Paper end
+                     }
+                     // Spigot start
+@@ -1654,8 +1639,7 @@ public abstract class World implements IBlockAccess {
+             }
+ 
+             if (tileentity.y()) {
+-                tilesThisCycle--;
+-                this.tileEntityListTick.remove(tileTickPosition--);
++                this.tileEntityListTick.remove(tileentity);
+                 //this.tileEntityList.remove(tileentity); // Paper - remove unused list
+                 // Paper start
+                 net.minecraft.server.Chunk chunk = tileentity.getCurrentChunk();
+@@ -1664,16 +1648,14 @@ public abstract class World implements IBlockAccess {
+                     // Paper end
+                 }
+             }
+-        }
+-
++        },worker);
+         timings.tileEntityTick.stopTiming(); // Spigot
+         timings.tileEntityPending.startTiming(); // Spigot
+         this.O = false;
+         this.methodProfiler.c("pendingBlockEntities");
+         if (!this.b.isEmpty()) {
+-            for (int i1 = 0; i1 < this.b.size(); ++i1) {
+-                TileEntity tileentity1 = (TileEntity) this.b.get(i1);
+-
++            for (TileEntity tileEntity : this.b) {
++                TileEntity tileentity1 = (TileEntity) tileEntity;
+                 if (!tileentity1.y()) {
+                     /* CraftBukkit start - Order matters, moved down
+                     if (!this.tileEntityList.contains(tileentity1)) {
+@@ -1697,6 +1679,7 @@ public abstract class World implements IBlockAccess {
+                 }
+             }
+ 
++
+             this.b.clear();
+         }
+ 
+-- 
+2.34.1
+
