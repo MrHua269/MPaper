@@ -123,10 +123,6 @@ import TileEntityEnderChest
 import TileEntityLootable
 import WorldGenStronghold
 import WorldProvider
-import IntHashMap
-import PathEntity
-import Pathfinder
-import Path
 
 cd "$workdir/Spigot/Spigot-Server/"
 rm -rf nms-patches applyPatches.sh makePatches.sh >/dev/null 2>&1
