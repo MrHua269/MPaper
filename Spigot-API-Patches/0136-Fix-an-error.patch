@@ -1,0 +1,28 @@
+From 57dba75644e580df96a1bce3d97afcc7043b8418 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 29 Oct 2022 18:19:55 +0800
+Subject: [PATCH] Fix an error
+
+
+diff --git a/src/main/java/co/aikar/util/Counter.java b/src/main/java/co/aikar/util/Counter.java
+index 1f3ca264..0d3079c3 100644
+--- a/src/main/java/co/aikar/util/Counter.java
++++ b/src/main/java/co/aikar/util/Counter.java
+@@ -2,12 +2,13 @@ package co.aikar.util;
+ 
+ import com.google.common.collect.ForwardingMap;
+ 
++import java.util.Collections;
+ import java.util.HashMap;
+ import java.util.Map;
+ import java.util.concurrent.ConcurrentHashMap;
+ 
+ public class Counter <T> extends ForwardingMap<T, Long> {
+-    private final Map<T, Long> counts = new ConcurrentHashMap<>();
++    private final Map<T, Long> counts = Collections.synchronizedMap(new HashMap<>());
+ 
+     public long decrement(T key) {
+         return increment(key, -1);
+-- 
+2.34.1
+
