@@ -1,0 +1,459 @@
+From 045c5ad9cce135eb3e8311ed9126954037d7fc1a Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 29 Oct 2022 20:04:21 +0800
+Subject: [PATCH] Fix AsyncCatcher and add parallel random ticking and parallel
+ world ticking
+
+
+diff --git a/src/main/java/moe/keyi/concurrent/AsyncCatcherPassedThreadFactories.java b/src/main/java/moe/keyi/concurrent/AsyncCatcherPassedThreadFactories.java
+new file mode 100644
+index 000000000..5543f2c6c
+--- /dev/null
++++ b/src/main/java/moe/keyi/concurrent/AsyncCatcherPassedThreadFactories.java
+@@ -0,0 +1,64 @@
++package moe.keyi.concurrent;
++
++import net.minecraft.server.MinecraftServer;
++import java.util.Set;
++import java.util.concurrent.*;
++import java.util.concurrent.atomic.AtomicInteger;
++
++//一个简单的工具类，可以提供绕过异步拦截器对MC进行操作
++@Deprecated
++public class AsyncCatcherPassedThreadFactories {
++    private static final AtomicInteger threadId = new AtomicInteger();
++    private static final Set<Thread> workers = ConcurrentHashMap.newKeySet();
++
++    private static final ThreadFactory SIMPLE_FACTORY = task -> {
++        Thread worker = new Thread(()->{
++            try{
++                task.run();
++            }finally {
++                workers.remove(Thread.currentThread());
++            }
++        },"Keyi-Pooled-Worker # "+threadId.getAndIncrement());
++        worker.setDaemon(true);
++        worker.setPriority(5);
++        worker.setContextClassLoader(MinecraftServer.class.getClassLoader());
++        workers.add(worker);
++        return worker;
++    };
++
++    private static final ForkJoinPool.ForkJoinWorkerThreadFactory FORK_JOIN_WORKER_THREAD_FACTORY = pool -> {
++        ForkJoinWorkerThread workerThread = new ForkJoinWorkerThread(pool){
++            @Override
++            protected void onTermination(Throwable exception) {
++                workers.remove(Thread.currentThread());
++                super.onTermination(exception);
++            }
++        };
++        workerThread.setName("Keyi-Fork/Join-Worker # "+threadId.getAndIncrement());
++        workerThread.setDaemon(true);
++        workerThread.setContextClassLoader(MinecraftServer.class.getClassLoader());
++        workerThread.setPriority(5);
++        workers.add(workerThread);
++        return workerThread;
++    };
++
++    public static boolean isThreadInPool(){
++        return workers.contains(Thread.currentThread());
++    }
++
++    public static ForkJoinPool wrapNewWorker(int threads){
++        return new ForkJoinPool(threads,FORK_JOIN_WORKER_THREAD_FACTORY,null,true);
++    }
++
++    public static ForkJoinPool wrapNewWorker(){
++        return wrapNewWorker(Runtime.getRuntime().availableProcessors());
++    }
++
++    public static Executor wrapNewThreadPool(int threads){
++        return Executors.newFixedThreadPool(threads,SIMPLE_FACTORY);
++    }
++
++    public static Executor wrapNewThreadPool(){
++        return wrapNewThreadPool(Runtime.getRuntime().availableProcessors());
++    }
++}
+diff --git a/src/main/java/moe/keyi/concurrent/AsyncConcurrentTraverseTask.java b/src/main/java/moe/keyi/concurrent/AsyncConcurrentTraverseTask.java
+index ba0e8d581..9c755003e 100644
+--- a/src/main/java/moe/keyi/concurrent/AsyncConcurrentTraverseTask.java
++++ b/src/main/java/moe/keyi/concurrent/AsyncConcurrentTraverseTask.java
+@@ -5,6 +5,7 @@ import java.util.concurrent.ForkJoinPool;
+ import java.util.concurrent.RecursiveAction;
+ import java.util.function.Consumer;
+ 
++//因为这个玩意执行之后直接用join等待不全所以就叫Async了
+ public class AsyncConcurrentTraverseTask<E> extends RecursiveAction {
+     private final Spliterator<E> spliterator;
+     private final Consumer<E> action;
+diff --git a/src/main/java/moe/keyi/concurrent/CompletableFutureTraverser.java b/src/main/java/moe/keyi/concurrent/CompletableFutureTraverser.java
+new file mode 100644
+index 000000000..d7fb0d909
+--- /dev/null
++++ b/src/main/java/moe/keyi/concurrent/CompletableFutureTraverser.java
+@@ -0,0 +1,31 @@
++package moe.keyi.concurrent;
++
++import java.util.Collection;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.Executor;
++import java.util.function.Consumer;
++import java.util.stream.Stream;
++
++//一个简单的利用CompletableFuture和Stream遍历的工具类
++//可以自定义每个线程的任务数量或者自动分配，请使用ForkJoinPool运行该任务
++public class CompletableFutureTraverser {
++    public static <E> CompletableFuture traverseAsync(Collection<E> input, Consumer<E> action, Executor worker){
++        return CompletableFuture.allOf(input.stream()
++            .map(value->CompletableFuture.runAsync(()->action.accept(value),worker))
++            .toArray(CompletableFuture[]::new));
++    }
++
++    public static <E> CompletableFuture traverseAsync(Stream<E> input, Consumer<E> action, Executor worker){
++        return CompletableFuture.allOf(input
++            .map(value->CompletableFuture.runAsync(()->action.accept(value),worker))
++            .toArray(CompletableFuture[]::new));
++    }
++
++    public static <E> void traverseSync(Stream<E> input,Consumer<E> action,Executor worker){
++        traverseAsync(input,action,worker).join();
++    }
++
++    public static <E> void traverseSync(Collection<E> input,Consumer<E> action,Executor worker){
++        traverseAsync(input,action,worker).join();
++    }
++}
+diff --git a/src/main/java/net/minecraft/server/EntityTracker.java b/src/main/java/net/minecraft/server/EntityTracker.java
+index c0899bacd..0067ec702 100644
+--- a/src/main/java/net/minecraft/server/EntityTracker.java
++++ b/src/main/java/net/minecraft/server/EntityTracker.java
+@@ -174,11 +174,9 @@ public class EntityTracker {
+         world.timings.tracker1.startTiming(); // Spigot
+         while (iterator.hasNext()) {
+             EntityTrackerEntry entitytrackerentry = (EntityTrackerEntry) iterator.next();
+-
+             entitytrackerentry.track(this.world.players);
+             if (entitytrackerentry.b) {
+                 Entity entity = entitytrackerentry.b();
+-
+                 if (entity instanceof EntityPlayer) {
+                     arraylist.add((EntityPlayer) entity);
+                 }
+@@ -187,13 +185,9 @@ public class EntityTracker {
+         world.timings.tracker1.stopTiming(); // Spigot
+ 
+         world.timings.tracker2.startTiming(); // Spigot
+-        for (int i = 0; i < arraylist.size(); ++i) {
+-            EntityPlayer entityplayer = (EntityPlayer) arraylist.get(i);
+-            Iterator iterator1 = this.c.iterator();
+-
+-            while (iterator1.hasNext()) {
+-                EntityTrackerEntry entitytrackerentry1 = (EntityTrackerEntry) iterator1.next();
+-
++        for (Object o : arraylist) {
++            EntityPlayer entityplayer = (EntityPlayer) o;
++            for (EntityTrackerEntry entitytrackerentry1 : this.c) {
+                 if (entitytrackerentry1.b() != entityplayer) {
+                     entitytrackerentry1.updatePlayer(entityplayer);
+                 }
+diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
+index 8c502eb51..69bcc638c 100644
+--- a/src/main/java/net/minecraft/server/MinecraftServer.java
++++ b/src/main/java/net/minecraft/server/MinecraftServer.java
+@@ -32,12 +32,13 @@ import java.util.List;
+ import java.util.Queue;
+ import java.util.Random;
+ import java.util.UUID;
+-import java.util.concurrent.Callable;
+-import java.util.concurrent.Executors;
+-import java.util.concurrent.FutureTask;
++import java.util.concurrent.*;
+ import java.util.function.Supplier;
+ import javax.annotation.Nullable;
+ import javax.imageio.ImageIO;
++
++import moe.keyi.concurrent.AsyncCatcherPassedThreadFactories;
++import moe.keyi.concurrent.CompletableFutureTraverser;
+ import org.apache.commons.lang3.Validate;
+ import org.apache.logging.log4j.LogManager;
+ import org.apache.logging.log4j.Logger;
+@@ -835,20 +836,26 @@ public abstract class MinecraftServer implements ICommandListener, Runnable, IAs
+         co.aikar.timings.TimingsManager.FULL_SERVER_TICK.stopTiming(); // Paper
+     }
+ 
++    private static Executor WORLD_WORKER;
++    public static final ForkJoinPool GLOBAL_WORKER = AsyncCatcherPassedThreadFactories.wrapNewWorker();
++
+     public void D() {
++
++        if (WORLD_WORKER == null){
++            WORLD_WORKER = AsyncCatcherPassedThreadFactories.wrapNewThreadPool(this.worlds.size());
++        }
++
+         MinecraftTimings.bukkitSchedulerTimer.startTiming(); // Paper
+         this.server.getScheduler().mainThreadHeartbeat(this.ticks); // CraftBukkit
+         MinecraftTimings.bukkitSchedulerTimer.stopTiming(); // Paper
+         MinecraftTimings.minecraftSchedulerTimer.startTiming(); // Paper
+         this.methodProfiler.a("jobs");
+-        Queue queue = this.j;
+-
+         // Spigot start
+         FutureTask<?> entry;
+         int count = this.j.size();
+         while (count-- > 0 && (entry = this.j.poll()) != null) {
+             SystemUtils.a(entry, MinecraftServer.LOGGER);
+-         }
++        }
+         // Spigot end
+         MinecraftTimings.minecraftSchedulerTimer.stopTiming(); // Paper
+ 
+@@ -876,72 +883,37 @@ public abstract class MinecraftServer implements ICommandListener, Runnable, IAs
+         }
+         MinecraftTimings.timeUpdateTimer.stopTiming(); // Spigot
+ 
+-        int i;
+-
+-        for (i = 0; i < this.worlds.size(); ++i) { // CraftBukkit
++        CompletableFutureTraverser.traverseSync(this.worlds,world->{
+             long j = System.nanoTime();
++            TileEntityHopper.skipHopperEvents = world.paperConfig.disableHopperMoveEvents || org.bukkit.event.inventory.InventoryMoveItemEvent.getHandlerList().getRegisteredListeners().length == 0;
++            this.methodProfiler.a(() -> {
++                return world.getWorldData().getName();
++            });
+ 
+-            // if (i == 0 || this.getAllowNether()) {
+-                WorldServer worldserver = this.worlds.get(i);
+-                TileEntityHopper.skipHopperEvents = worldserver.paperConfig.disableHopperMoveEvents || org.bukkit.event.inventory.InventoryMoveItemEvent.getHandlerList().getRegisteredListeners().length == 0;
+-
+-                this.methodProfiler.a(() -> {
+-                    return worldserver.getWorldData().getName();
+-                });
+-                /* Drop global time updates
+-                if (this.ticks % 20 == 0) {
+-                    this.methodProfiler.a("timeSync");
+-                    this.v.a((Packet) (new PacketPlayOutUpdateTime(worldserver.getTime(), worldserver.getDayTime(), worldserver.getGameRules().getBoolean("doDaylightCycle"))), worldserver.worldProvider.getDimensionManager().getDimensionID());
+-                    this.methodProfiler.b();
+-                }
+-                // CraftBukkit end */
+-
+-                this.methodProfiler.a("tick");
+-
+-                CrashReport crashreport;
+-
+-                try {
+-                    worldserver.timings.doTick.startTiming(); // Spigot
+-                    worldserver.doTick();
+-                    worldserver.timings.doTick.stopTiming(); // Spigot
+-                } catch (Throwable throwable) {
+-                    // Spigot Start
+-                    try {
+-                    crashreport = CrashReport.a(throwable, "Exception ticking world");
+-                    } catch (Throwable t){
+-                        throw new RuntimeException("Error generating crash report", t);
+-                    }
+-                    // Spigot End
+-                    worldserver.a(crashreport);
+-                    throw new ReportedException(crashreport);
+-                }
+-
+-                try {
+-                    worldserver.timings.tickEntities.startTiming(); // Spigot
+-                    worldserver.tickEntities();
+-                    worldserver.timings.tickEntities.stopTiming(); // Spigot
+-                } catch (Throwable throwable1) {
+-                    // Spigot Start
+-                    try {
+-                    crashreport = CrashReport.a(throwable1, "Exception ticking world entities");
+-                    } catch (Throwable t){
+-                        throw new RuntimeException("Error generating crash report", t);
+-                    }
+-                    // Spigot End
+-                    worldserver.a(crashreport);
+-                    throw new ReportedException(crashreport);
+-                }
++            this.methodProfiler.a("tick");
++            try {
++                world.timings.doTick.startTiming(); // Spigot
++                world.doTick();
++                world.timings.doTick.stopTiming(); // Spigot
++            } catch (Throwable throwable) {
++                throwable.printStackTrace();
++            }
+ 
+-                this.methodProfiler.b();
+-                this.methodProfiler.a("tracker");
+-                worldserver.getTracker().updatePlayers();
+-                this.methodProfiler.b();
+-                this.methodProfiler.b();
+-                worldserver.explosionDensityCache.clear(); // Paper - Optimize explosions
+-            // } // CraftBukkit
++            try {
++                world.timings.tickEntities.startTiming(); // Spigot
++                world.tickEntities();
++                world.timings.tickEntities.stopTiming(); // Spigot
++            } catch (Throwable throwable1) {
++                throwable1.printStackTrace();
++            }
+ 
+-            // this.i[i][this.ticks % 100] = System.nanoTime() - j; // CraftBukkit
+-        }
++            this.methodProfiler.b();
++            this.methodProfiler.a("tracker");
++            world.getTracker().updatePlayers();
++            this.methodProfiler.b();
++            this.methodProfiler.b();
++            world.explosionDensityCache.clear(); // Paper - Optimize explosions
++        },WORLD_WORKER);
+ 
+         this.methodProfiler.c("connection");
+         MinecraftTimings.connectionTimer.startTiming(); // Spigot
+@@ -958,7 +930,7 @@ public abstract class MinecraftServer implements ICommandListener, Runnable, IAs
+         this.methodProfiler.c("tickables");
+ 
+         MinecraftTimings.tickablesTimer.startTiming(); // Spigot
+-        for (i = 0; i < this.o.size(); ++i) {
++        for (int i = 0; i < this.o.size(); ++i) {
+             ((ITickable) this.o.get(i)).e();
+         }
+         MinecraftTimings.tickablesTimer.stopTiming(); // Spigot
+diff --git a/src/main/java/net/minecraft/server/StructureGenerator.java b/src/main/java/net/minecraft/server/StructureGenerator.java
+index f4dfba8f3..55dd48976 100644
+--- a/src/main/java/net/minecraft/server/StructureGenerator.java
++++ b/src/main/java/net/minecraft/server/StructureGenerator.java
+@@ -3,6 +3,7 @@ package net.minecraft.server;
+ import co.aikar.timings.MinecraftTimings;
+ import co.aikar.timings.Timing;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
++import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+ import it.unimi.dsi.fastutil.objects.ObjectIterator;
+ import java.util.Iterator;
+@@ -14,15 +15,15 @@ public abstract class StructureGenerator extends WorldGenBase {
+ 
+     private final Timing timing = MinecraftTimings.getStructureTiming(this); // Paper
+     private PersistentStructure a;
+-    protected Long2ObjectMap<StructureStart> c = new Long2ObjectOpenHashMap(1024);
+-    protected Long2ObjectMap<StructureStart> allStructures = new Long2ObjectOpenHashMap(1024); // Paper - Holds ref to structures for every chunk its part of, where as the one above this only holds the vanilla oriented ones.
++    protected Long2ObjectMap<StructureStart> c = Long2ObjectMaps.synchronize(new Long2ObjectOpenHashMap(1024));
++    protected Long2ObjectMap<StructureStart> allStructures = Long2ObjectMaps.synchronize(new Long2ObjectOpenHashMap(1024)); // Paper - Holds ref to structures for every chunk its part of, where as the one above this only holds the vanilla oriented ones.
+ 
+     public StructureGenerator() {}
+ 
+     public String getName() { return a(); } // Paper // OBFHELPER
+     public abstract String a();
+ 
+-    protected final synchronized void a(World world, final int i, final int j, int k, int l, ChunkSnapshot chunksnapshot) {
++    protected final void a(World world, final int i, final int j, int k, int l, ChunkSnapshot chunksnapshot) {
+         this.a(world);
+         if (!this.c.containsKey(ChunkCoordIntPair.a(i, j))) {
+             this.f.nextInt();
+@@ -75,7 +76,7 @@ public abstract class StructureGenerator extends WorldGenBase {
+         }
+     }
+ 
+-    public synchronized boolean a(World world, Random random, ChunkCoordIntPair chunkcoordintpair) {
++    public boolean a(World world, Random random, ChunkCoordIntPair chunkcoordintpair) {
+         timing.startTiming(); // Paper
+         this.a(world);
+         int i = (chunkcoordintpair.x << 4) + 8;
+diff --git a/src/main/java/net/minecraft/server/WorldServer.java b/src/main/java/net/minecraft/server/WorldServer.java
+index af4dedd2c..d6cb603b9 100644
+--- a/src/main/java/net/minecraft/server/WorldServer.java
++++ b/src/main/java/net/minecraft/server/WorldServer.java
+@@ -15,6 +15,7 @@ import java.util.Random;
+ import java.util.Set;
+ import java.util.TreeSet;
+ import java.util.UUID;
++import java.util.concurrent.Phaser;
+ import java.util.function.Predicate;
+ import java.util.stream.Collectors;
+ import javax.annotation.Nullable;
+@@ -474,7 +475,6 @@ public class WorldServer extends World implements IAsyncTaskHandler {
+         this.i();
+         if (this.worldData.getType() == WorldType.DEBUG_ALL_BLOCK_STATES) {
+             Iterator iterator = this.manager.b();
+-
+             while (iterator.hasNext()) {
+                 ((Chunk) iterator.next()).b(false);
+             }
+@@ -483,7 +483,8 @@ public class WorldServer extends World implements IAsyncTaskHandler {
+             int i = this.getGameRules().c("randomTickSpeed");
+             boolean flag = this.isRaining();
+             boolean flag1 = this.X();
+-
++            final Phaser randomTickWaiter = new Phaser();
++            randomTickWaiter.register();
+             this.methodProfiler.a("pollingChunks");
+ 
+             for (Iterator iterator1 = this.manager.b(); iterator1.hasNext(); this.methodProfiler.b()) {
+@@ -554,25 +555,33 @@ public class WorldServer extends World implements IAsyncTaskHandler {
+                         if (chunksection != Chunk.a && chunksection.shouldTick()) {
+                             for (int k1 = 0; k1 < i; ++k1) {
+                                 this.l = this.l * 3 + 1013904223;
+-                                int l1 = this.l >> 2;
+-                                int i2 = l1 & 15;
+-                                int j2 = l1 >> 8 & 15;
+-                                int k2 = l1 >> 16 & 15;
+-                                IBlockData iblockdata = chunksection.getType(i2, k2, j2);
+-                                Block block = iblockdata.getBlock();
+-
+-                                this.methodProfiler.a("randomTick");
+-                                if (block.isTicking()) {
+-                                    block.a((World) this, new BlockPosition(i2 + j, k2 + chunksection.getYPosition(), j2 + k), iblockdata, this.random);
+-                                }
+-
+-                                this.methodProfiler.b();
++                                randomTickWaiter.register();
++                                MinecraftServer.GLOBAL_WORKER.execute(()->{
++                                    try{
++                                        int l1 = this.l >> 2;
++                                        int i2 = l1 & 15;
++                                        int j2 = l1 >> 8 & 15;
++                                        int k2 = l1 >> 16 & 15;
++                                        IBlockData iblockdata = chunksection.getType(i2, k2, j2);
++                                        Block block = iblockdata.getBlock();
++
++                                        this.methodProfiler.a("randomTick");
++                                        if (block.isTicking()) {
++                                            block.a((World) this, new BlockPosition(i2 + j, k2 + chunksection.getYPosition(), j2 + k), iblockdata, this.random);
++                                        }
++
++                                        this.methodProfiler.b();
++                                    }finally {
++                                        randomTickWaiter.arriveAndDeregister();
++                                    }
++                                });
+                             }
+                         }
+                     }
+                 }
+                 timings.chunkTicksBlocks.stopTiming(); // Paper
+             }
++            randomTickWaiter.arriveAndAwaitAdvance();
+ 
+             this.methodProfiler.b();
+         }
+diff --git a/src/main/java/org/spigotmc/AsyncCatcher.java b/src/main/java/org/spigotmc/AsyncCatcher.java
+index 6c15d3bbb..829742c99 100644
+--- a/src/main/java/org/spigotmc/AsyncCatcher.java
++++ b/src/main/java/org/spigotmc/AsyncCatcher.java
+@@ -1,5 +1,6 @@
+ package org.spigotmc;
+ 
++import moe.keyi.concurrent.AsyncCatcherPassedThreadFactories;
+ import net.minecraft.server.MinecraftServer;
+ 
+ public class AsyncCatcher
+@@ -10,7 +11,7 @@ public class AsyncCatcher
+ 
+     public static void catchOp(String reason)
+     {
+-        if ( enabled && Thread.currentThread() != MinecraftServer.getServer().primaryThread && false)
++        if ( enabled && Thread.currentThread() != MinecraftServer.getServer().primaryThread && !AsyncCatcherPassedThreadFactories.isThreadInPool())
+         {
+             throw new IllegalStateException( "Asynchronous " + reason + "!" );
+         }
+-- 
+2.34.1
+
