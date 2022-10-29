@@ -1,0 +1,30 @@
+From ed79b9cc29a7ae77d867344599bd4352b94d481d Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 29 Oct 2022 19:02:58 +0800
+Subject: [PATCH] RemChange UnsafeList in Chunk to COW
+
+
+diff --git a/src/main/java/net/minecraft/server/Chunk.java b/src/main/java/net/minecraft/server/Chunk.java
+index 908478239..cea8d911a 100644
+--- a/src/main/java/net/minecraft/server/Chunk.java
++++ b/src/main/java/net/minecraft/server/Chunk.java
+@@ -17,6 +17,7 @@ import java.util.Map;
+ import java.util.Random;
+ import java.util.concurrent.ConcurrentHashMap;
+ import java.util.concurrent.ConcurrentLinkedQueue;
++import java.util.concurrent.CopyOnWriteArrayList;
+ import javax.annotation.Nullable;
+ import org.apache.logging.log4j.LogManager;
+ import org.apache.logging.log4j.Logger;
+@@ -137,7 +138,7 @@ public class Chunk {
+         this.heightMap = new int[256];
+ 
+         for (int k = 0; k < this.entitySlices.length; ++k) {
+-            this.entitySlices[k] = new org.bukkit.craftbukkit.util.UnsafeList(); // Spigot
++            this.entitySlices[k] = new CopyOnWriteArrayList<>();
+         }
+ 
+         Arrays.fill(this.h, -999);
+-- 
+2.34.1
+
