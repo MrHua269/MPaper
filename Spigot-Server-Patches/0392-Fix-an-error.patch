@@ -1,0 +1,22 @@
+From 2e53073605dd12380f72533172ef1cc9204fb976 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 29 Oct 2022 18:40:44 +0800
+Subject: [PATCH] Fix an error
+
+
+diff --git a/src/main/java/moe/keyi/concurrent/AsyncConcurrentTraverseTask.java b/src/main/java/moe/keyi/concurrent/AsyncConcurrentTraverseTask.java
+index 361e59674..ba0e8d581 100644
+--- a/src/main/java/moe/keyi/concurrent/AsyncConcurrentTraverseTask.java
++++ b/src/main/java/moe/keyi/concurrent/AsyncConcurrentTraverseTask.java
+@@ -13,7 +13,7 @@ public class AsyncConcurrentTraverseTask<E> extends RecursiveAction {
+     public AsyncConcurrentTraverseTask(Iterable<E> iterable, int threads, Consumer<E> action){
+         this.spliterator = iterable.spliterator();
+         this.action = action;
+-        this.threshold = (int)iterable.spliterator().getExactSizeIfKnown() / threads;
++        this.threshold = Math.min(20,(int)iterable.spliterator().getExactSizeIfKnown() / threads);
+     }
+ 
+     private AsyncConcurrentTraverseTask(Spliterator<E> spliterator, Consumer<E> action, long t) {
+-- 
+2.34.1
+
