@@ -1,0 +1,38 @@
+From f0a004698e8b0c2e0300b6b417fea286ac9a2e71 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 29 Oct 2022 18:54:00 +0800
+Subject: [PATCH] Remove tickPosition
+
+
+diff --git a/src/main/java/net/minecraft/server/World.java b/src/main/java/net/minecraft/server/World.java
+index 79eb74ed0..107d80a1e 100644
+--- a/src/main/java/net/minecraft/server/World.java
++++ b/src/main/java/net/minecraft/server/World.java
+@@ -117,7 +117,6 @@ public abstract class World implements IBlockAccess {
+     public long ticksPerAnimalSpawns;
+     public long ticksPerMonsterSpawns;
+     public boolean populating;
+-    private int tickPosition;
+     public final org.spigotmc.SpigotWorldConfig spigotConfig; // Spigot
+ 
+     public final com.destroystokyo.paper.PaperWorldConfig paperConfig; // Paper
+@@ -128,7 +127,6 @@ public abstract class World implements IBlockAccess {
+     public static String blockLocation;
+     private org.spigotmc.TickLimiter entityLimiter;
+     private org.spigotmc.TickLimiter tileLimiter;
+-    private int tileTickPosition;
+     public final Map<Explosion.CacheKey, Float> explosionDensityCache = new ConcurrentHashMap<>(); // Paper - Optimize explosions
+ 
+     public CraftWorld getWorld() {
+@@ -1565,7 +1563,7 @@ public abstract class World implements IBlockAccess {
+                 if (chunk != null) chunk.removeEntity(entity);
+                 // Paper end
+ 
+-                this.entityList.remove(this.tickPosition--); // CraftBukkit - Use field for loop variable
++                this.entityList.remove(entity); // CraftBukkit - Use field for loop variable
+                 this.c(entity);
+             }
+ 
+-- 
+2.34.1
+
