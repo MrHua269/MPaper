@@ -1,0 +1,73 @@
+From 0421535c0cb43797a0d4cde12a27f61b8a764cb3 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 29 Oct 2022 18:14:46 +0800
+Subject: [PATCH] Remove async catchers
+
+
+diff --git a/src/main/java/net/minecraft/server/World.java b/src/main/java/net/minecraft/server/World.java
+index 8f3cd3003..5397728c5 100644
+--- a/src/main/java/net/minecraft/server/World.java
++++ b/src/main/java/net/minecraft/server/World.java
+@@ -123,7 +123,6 @@ public abstract class World implements IBlockAccess {
+     public final ChunkPacketBlockController chunkPacketBlockController; // Paper - Anti-Xray
+ 
+     public final co.aikar.timings.WorldTimingsHandler timings; // Paper
+-    private boolean guardEntityList; // Spigot
+     public static boolean haveWeSilencedAPhysicsCrash;
+     public static String blockLocation;
+     private org.spigotmc.TickLimiter entityLimiter;
+@@ -1268,14 +1267,10 @@ public abstract class World implements IBlockAccess {
+         }
+         entity.shouldBeRemoved = true; // Paper
+ 
+-        if (!guardEntityList) { // Spigot - It will get removed after the tick if we are ticking // Paper - always remove from current chunk above
+-        // CraftBukkit start - Decrement loop variable field if we've already ticked this entity
+         int index = this.entityList.indexOf(entity);
+         if (index != -1) {
+             this.entityList.remove(index);
+         }
+-        // CraftBukkit end
+-        } // Spigot
+         this.c(entity);
+     }
+ 
+@@ -1524,7 +1519,6 @@ public abstract class World implements IBlockAccess {
+ 
+         org.spigotmc.ActivationRange.activateEntities(this); // Spigot
+         timings.entityTick.startTiming(); // Spigot
+-        guardEntityList = true; // Spigot
+         // CraftBukkit start - Use field for loop variable
+         co.aikar.timings.TimingHistory.entityTicks += this.entityList.size(); // Paper
+         AsyncConcurrentTraverseTask.wrapNewTask(this.entityList,entity->{
+@@ -1570,15 +1564,12 @@ public abstract class World implements IBlockAccess {
+                 if (chunk != null) chunk.removeEntity(entity);
+                 // Paper end
+ 
+-                guardEntityList = false; // Spigot
+                 this.entityList.remove(this.tickPosition--); // CraftBukkit - Use field for loop variable
+-                guardEntityList = true; // Spigot
+                 this.c(entity);
+             }
+ 
+             this.methodProfiler.b();
+         },worker);
+-        guardEntityList = false; // Spigot
+ 
+         timings.entityTick.stopTiming(); // Spigot
+         this.methodProfiler.c("blockEntities");
+diff --git a/src/main/java/org/spigotmc/AsyncCatcher.java b/src/main/java/org/spigotmc/AsyncCatcher.java
+index e44c23016..6c15d3bbb 100644
+--- a/src/main/java/org/spigotmc/AsyncCatcher.java
++++ b/src/main/java/org/spigotmc/AsyncCatcher.java
+@@ -10,7 +10,7 @@ public class AsyncCatcher
+ 
+     public static void catchOp(String reason)
+     {
+-        if ( enabled && Thread.currentThread() != MinecraftServer.getServer().primaryThread )
++        if ( enabled && Thread.currentThread() != MinecraftServer.getServer().primaryThread && false)
+         {
+             throw new IllegalStateException( "Asynchronous " + reason + "!" );
+         }
+-- 
+2.34.1
+
